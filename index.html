@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roleta da Sorte</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101528;color:#f6f4ff;font:16px system-ui}main{max-width:940px;margin:auto;padding:28px 16px}h1{font-size:clamp(2rem,7vw,3.8rem);margin:0;color:#ffe09c}header{margin-bottom:24px}header p,small{color:#c9c9e4}article{background:#1c2340;border:1px solid #3a4266;border-radius:20px;padding:18px}.layout{display:grid;gap:16px;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}.play{text-align:center}.wheelbox{position:relative;margin:18px auto;width:min(100%,430px);aspect-ratio:1}.pointer{position:absolute;top:-9px;left:50%;transform:translateX(-50%);width:30px;height:34px;clip-path:polygon(0 0,100% 0,50% 100%);background:#ffe09c;z-index:1}canvas{width:100%;height:100%;border:5px solid #ffe09c;border-radius:50%;transition:transform 3.1s cubic-bezier(.12,.72,.13,1)}button,textarea{font:inherit;border-radius:10px}button{border:0;padding:11px 18px;background:#ffe09c;color:#181828;font-weight:750;cursor:pointer}button:disabled{opacity:.55;cursor:default}textarea{width:100%;min-height:135px;padding:10px;background:#11182f;color:white;border:1px solid #62709c}label{display:block;font-weight:bold;margin-bottom:8px}#result{font-size:1.3rem;font-weight:750;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin:6px 0}#notice{color:#ffdf91}@media(max-width:690px){.layout{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){canvas{transition:none}}
+</style>
+<main><header><h1>Roleta da Sorte</h1><p>Sorteie prêmios, descontos ou nomes.</p></header>
+<div class="layout">
+<article class="play"><div class="wheelbox"><div class="pointer"></div><canvas width="600" height="600" aria-label="Roleta de opções"></canvas></div><button id="spin">Girar roleta</button><p id="result" role="status">Pronto para girar</p></article>
+<article><form id="settings"><label for="entries">Opções do sorteio</label><textarea id="entries" maxlength="1800" required></textarea><p><small>Uma opção por linha. Use <b>Brinde | 3</b> para limitar a três unidades. Sem quantidade, a opção pode sair novamente. Até 24 opções, com chances iguais entre as disponíveis.</small></p><button id="apply">Iniciar novo sorteio</button></form><p id="notice" role="status"></p><h2>Disponibilidade</h2><ul id="stock"></ul><h2>Últimos resultados</h2><ol id="history"></ol></article>
+</div></main>
+<script>
+const el = id => document.getElementById(id);
+const key = 'roleta-da-sorte-v1';
+const demo = 'Brinde | 3\nDesconto de 10% | 5\nPrêmio especial | 1\nTente novamente';
+const colors = ['#a93e6e','#355aa5','#08756e','#7243a5','#98551c','#34536b'];
+const wheel = document.querySelector('canvas');
+const ctx = wheel.getContext('2d');
+let state = {text:demo, items:parse(demo), history:[]};
+let rotation = 0;
+try {
+  const saved = JSON.parse(localStorage.getItem(key));
+  if (saved?.items?.length && Array.isArray(saved.history)) state = saved;
+} catch {}
+el('entries').value = state.text;
+function parse(text) {
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  if (lines.length < 2 || lines.length > 24) throw Error('Informe de 2 a 24 opções.');
+  return lines.map(line => {
+    const [label, quantity, ...extra] = line.split('|').map(part => part.trim());
+    if (!label || label.length > 60 || extra.length || (quantity !== undefined && (!/^\d{1,4}$/.test(quantity) || Number(quantity)<1))) {
+      throw Error('Use um nome de até 60 caracteres e, se quiser, uma quantidade de 1 a 9999.');
+    }
+    return {label, remaining:quantity === undefined ? null : Number(quantity)};
+  });
+}
+function active() {
+  return state.items.filter(item => item.remaining !== 0);
+}
+function draw(items) {
+  ctx.clearRect(0,0,600,600);
+  if (!items.length) items = [{label:'Sorteio encerrado'}];
+  const step = 2*Math.PI/items.length;
+  items.forEach(({label},i) => {
+    const angle = -Math.PI/2+i*step;
+    ctx.beginPath();ctx.moveTo(300,300);ctx.arc(300,300,300,angle,angle+step);ctx.closePath();
+    ctx.fillStyle=colors[i%colors.length];ctx.fill();
+    ctx.save();ctx.translate(300,300);ctx.rotate(angle+step/2);
+    ctx.fillStyle='white';ctx.font='bold 24px system-ui';ctx.textAlign='right';ctx.textBaseline='middle';
+    ctx.fillText(label.length>23 ? label.slice(0,22)+'…' : label,270,0,220);ctx.restore();
+  });
+  ctx.beginPath();ctx.arc(300,300,27,0,2*Math.PI);ctx.fillStyle='#ffe09c';ctx.fill();
+}
+function updateLists() {
+  for (const [id,lines] of [
+    ['stock',state.items.map(item => item.label+' · '+(item.remaining ?? 'ilimitado'))],
+    ['history',state.history]
+  ]) {
+    el(id).replaceChildren(...lines.map(line => {
+      const item=document.createElement('li');item.textContent=line;return item;
+    }));
+  }
+}
+function save() {
+  try { localStorage.setItem(key,JSON.stringify(state)); }
+  catch { el('notice').textContent='O navegador não conseguiu salvar. Os dados valem enquanto esta página estiver aberta.'; }
+}
+function resetWheel() {
+  wheel.style.transition='none';wheel.style.transform='rotate(0deg)';rotation=0;
+  draw(active());wheel.getBoundingClientRect();wheel.style.transition='';
+}
+el('settings').onsubmit = event => {
+  event.preventDefault();
+  if (el('apply').disabled) return;
+  try {
+    const text=el('entries').value, items=parse(text);
+    if (state.history.length && !confirm('Iniciar um novo sorteio e zerar o histórico e o estoque atual?')) return;
+    state={text,items,history:[]};el('notice').textContent='';save();resetWheel();updateLists();
+    el('spin').disabled=false;el('result').textContent='Pronto para girar';
+  } catch(error) { el('notice').textContent=error.message; }
+};
+el('spin').onclick = () => {
+  const items=active();
+  if (!items.length || el('apply').disabled) return;
+  resetWheel();
+  const index=Math.floor(Math.random()*items.length);
+  const winner=items[index];
+  rotation=360*5+360-(index+.5)*360/items.length;
+  el('spin').disabled=el('apply').disabled=true;
+  el('result').textContent='Girando…';
+  wheel.style.transform='rotate('+rotation+'deg)';
+  if (winner.remaining !== null) winner.remaining--;
+  state.history.unshift(winner.label);
+  state.history=state.history.slice(0,20);
+  save();
+  setTimeout(() => {
+    el('result').textContent='Resultado: '+winner.label;
+    updateLists();
+    el('apply').disabled=false;
+    el('spin').disabled=!active().length;
+  },matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 3150);
+};
+resetWheel();updateLists();el('spin').disabled=!active().length;
+</script>
+</html>
